@@ -1,8 +1,9 @@
 APP = rectrl_exporter
 OCI = podman
 
+REPO ?= "ict.acs.edu/infra"
 VERSION = 0.0.1
-IMAGE = ict.acs.edu/infra/${APP}:${VERSION}
+IMAGE = ${REPO}/${APP}:${VERSION}
 
 build:
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
