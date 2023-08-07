@@ -16,6 +16,7 @@ const (
 	keyWebTelemetryPath = "web.telemetry-path"
 	keyWebMaxRequests   = "web.max-requests"
 
+	keyDebug    = "debug"
 	keyLogLevel = "log"
 )
 
@@ -48,6 +49,13 @@ func New() *cobra.Command {
 		keyWebMaxRequests,
 		40,
 		"Maximum number of parallel scrape requests. Use 0 to disable.",
+	)
+
+	flags.BoolP(
+		keyDebug,
+		"d",
+		false,
+		"Set loglevel to Debug",
 	)
 
 	flags.AddFlagSet(easyxporter.Flags())
@@ -88,10 +96,14 @@ func runExporter(vp *viper.Viper, args []string) error {
 		metricsPath   = vp.GetString(keyWebTelemetryPath)
 		maxRequests   = vp.GetInt(keyWebMaxRequests)
 		logLevel      = vp.GetString(keyLogLevel)
+		debug         = vp.GetBool(keyDebug)
 	)
 
+	if debug {
+		logLevel = "DEBUG"
+	}
 	logger := newLogger(logLevel)
-	logger.Debug("msg", "init server", "metricsPath: ", metricsPath, " listenAddress: ", listenAddress)
+	logger.Debug("init server ->", " metricsPath: ", metricsPath, " listenAddress: ", listenAddress, "log: ", logLevel)
 
 	return easyxporter.Build(
 		listenAddress,

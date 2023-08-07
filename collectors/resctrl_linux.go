@@ -171,18 +171,23 @@ func (c *resctrlStatCollector) Update(ch chan<- prometheus.Metric) error {
 			continue
 		}
 
+		groupName := filepath.Base(mg)
+		if mg == rootResctrl {
+			groupName = "global"
+		}
+
 		for i, numaNodeMBMStats := range *stats.MBMStats {
 			ch <- prometheus.MustNewConstMetric(
 				c.mbmTotalBytes,
 				prometheus.CounterValue,
 				float64(numaNodeMBMStats.MBMTotalBytes),
-				mg, strconv.Itoa(i),
+				groupName, strconv.Itoa(i),
 			)
 			ch <- prometheus.MustNewConstMetric(
 				c.mbmLocalBytes,
 				prometheus.CounterValue,
 				float64(numaNodeMBMStats.MBMLocalBytes),
-				mg, strconv.Itoa(i),
+				groupName, strconv.Itoa(i),
 			)
 		}
 
@@ -191,7 +196,7 @@ func (c *resctrlStatCollector) Update(ch chan<- prometheus.Metric) error {
 				c.llcOccupancy,
 				prometheus.GaugeValue,
 				float64(numaNodeCMTStats.LLCOccupancy),
-				mg, strconv.Itoa(i),
+				groupName, strconv.Itoa(i),
 			)
 		}
 	}
