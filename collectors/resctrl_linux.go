@@ -39,7 +39,8 @@ var (
 )
 
 type resctrlStatCollector struct {
-	logger    *logrus.Logger
+	logger *logrus.Logger
+	// RCU mongroups
 	mongroups atomic.Value
 
 	llcOccupancy  *prometheus.Desc

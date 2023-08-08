@@ -2,7 +2,7 @@ APP = rectrl_exporter
 OCI = podman
 
 REPO ?= "ict.acs.edu/infra"
-VERSION = 0.0.1
+VERSION ?= 0.0.2
 IMAGE = ${REPO}/${APP}:${VERSION}
 
 build:
