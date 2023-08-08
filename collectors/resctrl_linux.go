@@ -2,20 +2,23 @@ package collectors
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/Faione/easyxporter"
+	"github.com/fsnotify/fsnotify"
 	"github.com/opencontainers/runc/libcontainer/intelrdt"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 )
 
 func init() {
-	easyxporter.RegisterCollector(resctrl, true, NewResctrlStatCollector)
+	easyxporter.RegisterAsyncCollector(resctrl, true, NewResctrlStatCollector)
 }
 
 const (
@@ -36,12 +39,15 @@ var (
 )
 
 type resctrlStatCollector struct {
-	logger        *logrus.Logger
+	logger    *logrus.Logger
+	mongroups atomic.Value
+
 	llcOccupancy  *prometheus.Desc
 	mbmTotalBytes *prometheus.Desc
 	mbmLocalBytes *prometheus.Desc
 }
 
+// / Checking Rectrl Env
 func resctrlCheck() error {
 	var err error
 	rootResctrl, err = intelrdt.Root()
@@ -56,7 +62,7 @@ func resctrlCheck() error {
 	return nil
 }
 
-func NewResctrlStatCollector(logger *logrus.Logger) (easyxporter.Collector, error) {
+func NewResctrlStatCollector(logger *logrus.Logger) (easyxporter.AsyncCollector, error) {
 	if err := resctrlCheck(); err != nil {
 		return nil, err
 	}
@@ -68,6 +74,19 @@ func NewResctrlStatCollector(logger *logrus.Logger) (easyxporter.Collector, erro
 	if !(enabledCMT || enabledMBM) {
 		return nil, errors.New("there are no monitoring features available")
 	}
+
+	monGroupPaths, err := filepath.Glob(filepath.Join(rootResctrl, monGroupsDirName, "*"))
+	if err != nil {
+		return nil, err
+	}
+	monGroupPaths = append(monGroupPaths, rootResctrl)
+	mongroups := make(map[string]struct{})
+	for _, mg := range monGroupPaths {
+		mongroups[mg] = struct{}{}
+	}
+	var at atomic.Value
+
+	at.Store(mongroups)
 
 	dynLabels := []string{"group", "numa"}
 	return &resctrlStatCollector{
@@ -86,10 +105,12 @@ func NewResctrlStatCollector(logger *logrus.Logger) (easyxporter.Collector, erro
 			"Local memory bandwidth usage statistics counted with RDT Memory Bandwidth Monitoring (MBM).",
 			dynLabels, nil,
 		),
-		logger: logger,
+		logger:    logger,
+		mongroups: at,
 	}, nil
 }
 
+// read Resctrl Stat Per Numa
 func readStatFrom(path string) (uint64, error) {
 	context, err := os.ReadFile(path)
 	if err != nil {
@@ -110,7 +131,7 @@ func readStatFrom(path string) (uint64, error) {
 	return stat, nil
 }
 
-// read from one mongroup
+// Read Rdt Stats from Mongroup
 func getIntelRDTStatsFrom(path string) (intelrdt.Stats, error) {
 	stats := intelrdt.Stats{}
 
@@ -157,14 +178,8 @@ func getIntelRDTStatsFrom(path string) (intelrdt.Stats, error) {
 }
 
 func (c *resctrlStatCollector) Update(ch chan<- prometheus.Metric) error {
-
-	monGroupPaths, err := filepath.Glob(filepath.Join(rootResctrl, monGroupsDirName, "*"))
-	if err != nil {
-		return err
-	}
-	monGroupPaths = append(monGroupPaths, rootResctrl)
-
-	for _, mg := range monGroupPaths {
+	mongroups := c.mongroups.Load().(map[string]struct{})
+	for mg := range mongroups {
 		stats, err := getIntelRDTStatsFrom(mg)
 		if err != nil {
 			c.logger.Error(err)
@@ -198,6 +213,61 @@ func (c *resctrlStatCollector) Update(ch chan<- prometheus.Metric) error {
 				float64(numaNodeCMTStats.LLCOccupancy),
 				groupName, strconv.Itoa(i),
 			)
+		}
+	}
+
+	return nil
+}
+
+func (c *resctrlStatCollector) AsyncCollect(ctx context.Context) error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(filepath.Join(rootResctrl, monGroupsDirName)); err != nil {
+		return err
+	}
+
+	c.logger.Debug("watching directory ", filepath.Join(rootResctrl, monGroupsDirName))
+
+MAIN_LOOP:
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				c.logger.Error("fetch events failed")
+				continue
+			}
+
+			var op func(set map[string]struct{})
+
+			if event.Op&fsnotify.Create == fsnotify.Create {
+				op = func(set map[string]struct{}) {
+					set[event.Name] = struct{}{}
+				}
+				c.logger.Debug("sync create mongroup: ", event.Name)
+			}
+
+			if event.Op&fsnotify.Remove == fsnotify.Remove {
+				op = func(set map[string]struct{}) {
+					delete(set, event.Name)
+				}
+				c.logger.Debug("sync delete mongroup: ", event.Name)
+			}
+
+			if op != nil {
+				newMongroups := make(map[string]struct{}, 0)
+				for k := range c.mongroups.Load().(map[string]struct{}) {
+					newMongroups[k] = struct{}{}
+				}
+				op(newMongroups)
+				c.mongroups.Store(newMongroups)
+			}
+
+		case <-ctx.Done():
+			break MAIN_LOOP
 		}
 	}
 
