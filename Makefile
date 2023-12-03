@@ -1,12 +1,12 @@
-APP = rectrl_exporter
+APP = resctrl_exporter
 OCI = podman
 
 REPO ?= "ict.acs.edu/infra"
-VERSION ?= 0.0.2
+VERSION ?= 0.0.3
 IMAGE = ${REPO}/${APP}:${VERSION}
 
-build:
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
+${APP}:
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
 	 go build \
 	   -trimpath \
 	   -mod vendor \
@@ -14,6 +14,9 @@ build:
 	   -o bin/${APP}_amd64 main.go
 image:
 	@${OCI} build -t ${IMAGE} .
+
+local_image: ${APP}
+	@${OCI} build -f localbuild.Dockerfile -t ${IMAGE} .
 
 clean:
 	@rm -rf bin/*

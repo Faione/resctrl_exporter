@@ -50,7 +50,6 @@ func New() *cobra.Command {
 		40,
 		"Maximum number of parallel scrape requests. Use 0 to disable.",
 	)
-
 	flags.BoolP(
 		keyDebug,
 		"d",
